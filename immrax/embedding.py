@@ -156,13 +156,6 @@ class InclusionEmbedding(EmbeddingSystem):
         **kwargs
     ) -> jax.Array:
 
-        if refine is not None:
-            raise (
-                Exception(
-                    "Class AuxVarEmbedding does not support passing refine as an argument, since the refinement is calculated from the auxillary variables."
-                )
-            )
-
         if self.evolution == "continuous":
             n = self.sys.xlen
             _x = x[:n]
@@ -330,6 +323,13 @@ class AuxVarEmbedding(TransformEmbedding):
         refine: Callable[[Interval], Interval] | None = None,
         **kwargs
     ) -> jax.Array:
+
+        if refine is not None:
+            raise (
+                Exception(
+                    "Class AuxVarEmbedding does not support passing refine as an argument, since the refinement is calculated from the auxillary variables."
+                )
+            )
 
         if self.evolution == "continuous":
             n = self.sys.xlen
