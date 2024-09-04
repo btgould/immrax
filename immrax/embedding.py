@@ -2,7 +2,6 @@ import abc
 import jax
 import jax.numpy as jnp
 from jaxtyping import Integer, Float
-from diffrax import AbstractSolver
 from typing import List, Literal, Union, Any, Callable, Tuple
 
 from immrax.utils import I_refine, null_space
@@ -156,6 +155,13 @@ class InclusionEmbedding(EmbeddingSystem):
         refine: Callable[[Interval], Interval] | None = None,
         **kwargs
     ) -> jax.Array:
+
+        if refine is not None:
+            raise (
+                Exception(
+                    "Class AuxVarEmbedding does not support passing refine as an argument, since the refinement is calculated from the auxillary variables."
+                )
+            )
 
         if self.evolution == "continuous":
             n = self.sys.xlen
@@ -311,30 +317,49 @@ class AuxVarEmbedding(TransformEmbedding):
 
         self.IH = jax.jit(I_refine(self.A))
 
-        # Only actually lift the system if we are introducing new aux vars
-        liftsys = sys
-        if H.shape[0] > sys.xlen:
-            liftsys = LiftedSystem(sys, self.H, self.Hp)
+        liftsys = LiftedSystem(sys, self.H, self.Hp)
 
         # FIXME: mjacif doesn't work here, I think it should
         super().__init__(liftsys, if_transform)
 
-    @partial(jax.jit, static_argnums=(0, 4), static_argnames=("solver", "f_kwargs"))
-    def compute_trajectory(
+    def E(
         self,
-        t0: Union[Integer, Float],
-        tf: Union[Integer, Float],
-        x0: jax.Array,
-        inputs: Tuple[Callable[[int, jax.Array], jax.Array]] = (),
-        dt: float = 0.01,
-        *,
-        solver: Union[Literal["euler", "rk45", "tsit5"], AbstractSolver] = "tsit5",
-        f_kwargs: immutabledict = immutabledict({}),
+        t: Any,
+        x: jax.Array,
+        *args,
+        refine: Callable[[Interval], Interval] | None = None,
         **kwargs
-    ) -> Trajectory:
-        return super().compute_trajectory(
-            t0, tf, x0, inputs, dt, solver, f_kwargs.set("refine", self.IH), **kwargs
-        )
+    ) -> jax.Array:
+
+        if self.evolution == "continuous":
+            n = self.sys.xlen
+            _x = x[:n]
+            x_ = x[n:]
+
+            Fkwargs = lambda t, x, *args: self.F(t, self.IH(x), *args, **kwargs)
+
+            # Computing F on the faces of the hyperrectangle
+
+            _X = interval(
+                jnp.tile(_x, (n, 1)), jnp.where(jnp.eye(n), _x, jnp.tile(x_, (n, 1)))
+            )
+            _E = jax.vmap(Fkwargs, (None, 0) + (None,) * len(args))(t, _X, *args)
+            # _E = jnp.array([self.Fi[i](t, _X[i], *args, **kwargs).lower for i in range(n)])
+
+            X_ = interval(
+                jnp.where(jnp.eye(n), x_, jnp.tile(_x, (n, 1))), jnp.tile(x_, (n, 1))
+            )
+            E_ = jax.vmap(Fkwargs, (None, 0) + (None,) * len(args))(t, X_, *args)
+            # E_ = jnp.array([self.Fi[i](t, X_[i], *args, **kwargs).upper for i in range(n)])
+
+            # return jnp.concatenate((_E, E_))
+            return jnp.concatenate((jnp.diag(_E.lower), jnp.diag(E_.upper)))
+
+        elif self.evolution == "discrete":
+            # Convert x from ut to i, compute through F, convert back to ut.
+            return i2ut(self.F(interval(t), self.IH(ut2i(x)), *args, **kwargs))
+        else:
+            raise Exception("evolution needs to be 'continuous' or 'discrete'")
 
 
 # class InterconnectedEmbedding (EmbeddingSystem) :
