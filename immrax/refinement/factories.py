@@ -5,7 +5,8 @@ from typing import Callable
 import jax
 import jax.numpy as jnp
 
-from immrax.optim import linprog
+import scipy.optimize as opt
+
 from immrax.inclusion import Interval, icopy, interval
 from immrax.utils import angular_sweep, null_space
 
@@ -36,41 +37,27 @@ class LinProgRefinement(Refinement):
             )  # TODO: try adding buffer region *inside* the bounds to collapsed face
             obj_vec_i = self.H[idx]
 
-            sol_min, sol_type_min = linprog(
-                obj=obj_vec_i,
-                A_ub=A_ub,
-                b_ub=b_ub,
-                unbounded=True,
+            sol_min = opt.linprog(
+                c=obj_vec_i, A_ub=A_ub, b_ub=b_ub, bounds=(None, None)
             )
 
-            sol_max, sol_type_max = linprog(
-                obj=-obj_vec_i,
-                A_ub=A_ub,
-                b_ub=b_ub,
-                unbounded=True,
+            sol_max = opt.linprog(
+                c=-obj_vec_i, A_ub=A_ub, b_ub=b_ub, bounds=(None, None)
             )
 
             # If a vector that gives extra info on this var is found, refine bounds
-            new_lower_i = jnp.where(
-                sol_type_min.success,
-                jnp.maximum(sol_min.fun, ret.lower[idx]),
-                ret.lower[idx],
-            )[0]
+            new_lower_i = sol_min.fun if sol_min.success else ret.lower[idx]
             retl = ret.lower.at[idx].set(new_lower_i)
-            new_upper_i = jnp.where(
-                sol_type_max.success,
-                jnp.minimum(-sol_max.fun, ret.upper[idx]),
-                ret.upper[idx],
-            )[0]
+            new_upper_i = -sol_max.fun if sol_max.success else ret.upper[idx]
             retu = ret.upper.at[idx].set(new_upper_i)
 
             return interval(retl, retu)
 
         def I_r(y: Interval) -> Interval:
-            # for i in range(n):
-            #     ret = var_refine(ret, i)
-
-            return jax.lax.fori_loop(0, y.shape[0], var_refine, icopy(y))
+            ret = icopy(y)
+            for i in range(y.shape[0]):
+                ret = var_refine(i, ret)
+            return ret
 
         return I_r
 
