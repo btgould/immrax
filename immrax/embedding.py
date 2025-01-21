@@ -1,11 +1,12 @@
 import abc
 from functools import partial
-from typing import Any, Callable, Literal, Union
+from typing import Any, Callable, Literal, Union, List
 
 import jax
 import jax.numpy as jnp
 from jaxtyping import Float, Integer
 
+import immrax as irx
 from .refinement import SampleRefinement, LinProgRefinement
 from .inclusion import Interval, i2ut, interval, jacif, mjacif, natif, ut2i
 from .system import LiftedSystem, System
@@ -153,16 +154,20 @@ class InclusionEmbedding(EmbeddingSystem):
             _X = interval(
                 jnp.tile(_x, (n, 1)), jnp.where(jnp.eye(n), _x, jnp.tile(x_, (n, 1)))
             )
-            _E = jax.vmap(Fkwargs, (None, 0) + (None,) * len(args))(t, _X, *args)
-            # _E = jnp.array([self.Fi[i](t, _X[i], *args, **kwargs).lower for i in range(n)])
-
+            _E_lower: List[None | jax.Array] = [None] * len(_X)
+            for i in range(len(_X)):
+                fx = Fkwargs(t, _X[i])
+                _E_lower[i] = fx.lower
+            _E = irx.interval(_E_lower, _E_lower)
             X_ = interval(
                 jnp.where(jnp.eye(n), x_, jnp.tile(_x, (n, 1))), jnp.tile(x_, (n, 1))
             )
-            E_ = jax.vmap(Fkwargs, (None, 0) + (None,) * len(args))(t, X_, *args)
-            # E_ = jnp.array([self.Fi[i](t, X_[i], *args, **kwargs).upper for i in range(n)])
+            E__upper: List[None | jax.Array] = [None] * len(_X)
+            for i in range(len(X_)):
+                fx = Fkwargs(t, X_[i])
+                E__upper[i] = fx.upper
+            E_ = irx.interval(E__upper, E__upper)
 
-            # return jnp.concatenate((_E, E_))
             return jnp.concatenate((jnp.diag(_E.lower), jnp.diag(E_.upper)))
 
         elif self.evolution == "discrete":
