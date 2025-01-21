@@ -1,4 +1,5 @@
 import pickle
+import time
 from typing import Literal
 import time 
 
@@ -62,25 +63,25 @@ def show_refinements(mode: Literal["sample", "linprog"]):
 
         # Compute refined trajectory
         auxsys = AuxVarEmbedding(sys, H, mode=mode, if_transform=mjacif)
-        print("Compiling...")
+        # auxsys.compute_trajectory(0.0, sim_len, irx.i2ut(lifted_x0_int)) # can't use compute_trajectory because scipy LP is not traceable
+
+        # Euler integrate instead
         start = time.time()
-        get_traj = jax.jit(lambda t0, tf, x0: auxsys.compute_trajectory(t0, tf, x0), backend="cpu")
-        get_traj(0.0, 0.01, irx.i2ut(lifted_x0_int))
-        print(f"Compilation took: {time.time() - start}s")
-        print("Compiled.\nComputing trajectory...")
-        traj, comp_time = run_times(
-            1,
-            get_traj,
-            0.0,
-            sim_len,
-            irx.i2ut(lifted_x0_int),
-        )
-        ys_int = [irx.ut2i(y) for y in traj.ys]
+        dt = 0.01
+        ts = jnp.arange(0.0, sim_len, dt)
+        x = irx.i2ut(lifted_x0_int)
+        ys = jnp.empty((ts.size, x.size))
+        for i, t in enumerate(ts):
+            ys = ys.at[i].set(x)
+            x += dt * auxsys.E(t, x)
+
+        traj = Trajectory(ts, ys, jnp.ones_like(ts, dtype=bool))
         print(
-            f"Computing trajectory with {mode} refinement for {i + 1} aux vars took: {comp_time.mean()} ± {comp_time.std()}s"
+            f"Computing trajectory with {mode} refinement for {i + 1} aux vars took {time.time() - start:.4g}s"
         )
+
+        ys_int = [irx.ut2i(y) for y in traj.ys]
         print(f"Final bound: \n{ys_int[-1][:2]}")
-        pickle.dump(ys_int, open(f"{mode}_traj_{i}.pkl", "wb"))
 
         # Display results
         # plt.sca(axs[i])
