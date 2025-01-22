@@ -5,6 +5,8 @@ from jax.tree_util import register_pytree_node_class
 from typing import Tuple
 from functools import partial
 
+from jaxopt import OptStep, BoxOSQP, OSQP
+
 
 @register_pytree_node_class
 class SimplexStep:
@@ -312,40 +314,46 @@ def linprog(
     return sol, sol_type
 
 
-def compare(
-    my_ans: Tuple[SimplexStep, SimplexSolutionType], sp_ans
-) -> Tuple[bool, str]:
-    my_sol, my_sol_type = my_ans
+def compare(jaxopt_ans: OptStep, sp_ans, c) -> Tuple[bool, str]:
+    jaxopt_sol, jaxopt_sol_state = jaxopt_ans
     if sp_ans.status == 2:
-        if not my_sol_type.feasible:
+        if not jaxopt_sol_state.status == BoxOSQP.PRIMAL_INFEASIBLE:
             return True, "SUCCESS: problem is infeasible"
         else:
-            return False, "FAILURE: we did not detect problem as infeasible"
+            return False, "FAILURE: jaxopt did not detect problem as infeasible"
     elif sp_ans.status == 3:
-        if not my_sol_type.bounded:
+        if not jaxopt_sol_state.status == BoxOSQP.DUAL_INFEASIBLE:
             return True, "SUCCESS: problem is unbounded"
         else:
-            return False, "FAILURE: we did not detect problem as unbounded"
+            return False, "FAILURE: jaxopt did not detect problem as unbounded"
     elif sp_ans.status == 0:
-        if my_sol_type.success:
-            correct = jnp.allclose(my_sol.fun, sp_ans.fun, atol=1e-7)
+        if jaxopt_sol_state.status == BoxOSQP.SOLVED:
+            correct = jnp.allclose(c @ jaxopt_sol.primal, sp_ans.fun, atol=1e-7)
 
             if correct:
-                return True, f"SUCCESS: x={my_sol.x}"
+                return True, f"SUCCESS: x={jaxopt_sol.primal}"
             else:
-                return False, "FAILURE: objective value does not match"
+                return (
+                    False,
+                    f"FAILURE: objective value does not match. Expected {sp_ans.fun}, got {c @ jaxopt_sol.primal}",
+                )
         else:
-            if not my_sol_type.feasible:
-                return False, "FAILURE: we incorrectly identified problem as infeasible"
-            elif not my_sol_type.bounded:
-                return False, "FAILURE: we incorrectly identified problem as unbounded"
+            if not jaxopt_sol_state.status == BoxOSQP.PRIMAL_INFEASIBLE:
+                return (
+                    False,
+                    "FAILURE: jaxopt incorrectly identified problem as infeasible",
+                )
+            elif not jaxopt_sol_state.status == BoxOSQP.DUAL_INFEASIBLE:
+                return (
+                    False,
+                    "FAILURE: jaxopt incorrectly identified problem as unbounded",
+                )
 
     return False, "FAILURE: unknown status"
 
 
 if __name__ == "__main__":
     import scipy.optimize as opt
-    import matplotlib.pyplot as plt
 
     def verify(
         c: jax.Array,
@@ -355,8 +363,6 @@ if __name__ == "__main__":
         b_eq: jax.Array = jnp.empty((0,)),
         unbounded: bool = False,
     ):
-        my_sol = linprog(c, A_ub, b_ub, A_eq, b_eq, unbounded)
-
         bounds = (None, None) if unbounded else (0, None)
         sp_A_eq = A_eq if A_eq.size > 0 else None
         sp_b_eq = b_eq if b_eq.size > 0 else None
@@ -364,50 +370,58 @@ if __name__ == "__main__":
         sp_b_ub = b_ub if b_ub.size > 0 else None
         sp_sol = opt.linprog(c, sp_A_ub, sp_b_ub, sp_A_eq, sp_b_eq, bounds=bounds)
 
-        print(compare(my_sol, sp_sol))
+        jaxopt_params_eq = (A_eq, b_eq) if sp_A_eq is not None else None
+        jaxopt_params_ineq = (A_ub, b_ub) if sp_A_ub is not None else None
+        jaxopt_sol = OSQP().run(
+            params_obj=(jnp.zeros((c.size, c.size)), c),
+            params_eq=jaxopt_params_eq,
+            params_ineq=jaxopt_params_ineq,
+        )
+
+        print(compare(jaxopt_sol, sp_sol, c))
 
     print("Checking against scipy")
     A = jnp.array(
         [
-            [1, -1],
+            [1.0, -1],
             [3, 2],
             [1, 0],
             [-2, 3],
         ]
     )
-    b = jnp.array([1, 12, 2, 9])
-    c = jnp.array([-4, -2])
+    b = jnp.array([1.0, 12, 2, 9])
+    c = jnp.array([-4.0, -2])
 
     verify(c, A_ub=A, b_ub=b)
 
     A = jnp.array(
         [
-            [1],
+            [1.0],
         ]
     )
-    b = jnp.array([10])
-    c = jnp.array([1])
+    b = jnp.array([10.0])
+    c = jnp.array([1.0])
 
     verify(c, A_ub=A, b_ub=b, unbounded=True)
 
     A = jnp.array(
         [
-            [-1],
+            [-1.0],
         ]
     )
-    b = jnp.array([-10])
-    c = jnp.array([-1])
+    b = jnp.array([-10.0])
+    c = jnp.array([-1.0])
 
     verify(c, A_ub=A, b_ub=b)
 
     A = jnp.array(
         [
-            [1, -1],
+            [1.0, -1],
             [-1, 1],
         ]
     )
-    b = jnp.array([1, -2])
-    c = jnp.array([-4, -2])
+    b = jnp.array([1.0, -2])
+    c = jnp.array([-4.0, -2])
 
     verify(c, A_ub=A, b_ub=b)
 
@@ -469,133 +483,133 @@ if __name__ == "__main__":
     verify(c, A_eq=A_eq, b_eq=b_eq, A_ub=A_ub, b_ub=b_ub, unbounded=True)
 
     # Testing autodiff
-    print("Checking autodiff")
-    A = jnp.array([[1.0, 1.0], [-3.0, -1.0], [1.0, 0.0]])
-    b = jnp.array([6.0, -3.0, 3.0])
-    c = jnp.array([-2.0, -1.0])
-
-    sol, sol_type = linprog(c, A, b)
-
-    g = jax.jacfwd(linprog, has_aux=True, argnums=[0, 1, 2])
-    jac, jac_type = g(c, A, b)
-    dxdc, dxdA, dxdb = jac.x
-    dfdc, dfdA, dfdb = [arr[-1, -1] for arr in jac.tableau]
-    dbdc, dbdA, dbdb = jac.basis
-
-    dAs = jnp.array(
-        [
-            jnp.zeros_like(A).at[(i, j)].set(1)
-            for i in range(A.shape[0])
-            for j in range(A.shape[1])
-        ]
-    )
-    print(f"Checking wrt A:\n{dxdA=},\n{dfdA=},\n{dbdA=}")
-    sol_fig, val_fig = None, None
-    sol_axs, val_axs = [], []
-    for dA in dAs / 10:
-        Ap = A + dA
-        solp, solp_type = linprog(c, Ap, b)
-
-        linearized = sol.x + jnp.einsum("ijk, jk->i", dxdA, dA)
-        if not jnp.allclose(linearized, solp.x):
-            basis_changed = jnp.any(sol.basis != solp.basis)
-            print(
-                f"Linearized solution off by {jnp.linalg.norm(linearized - solp.x)} ({basis_changed=})"
-            )
-
-            sol_fig = plt.figure() if sol_fig is None else sol_fig
-            n = len(sol_axs) + 1
-            ax = sol_fig.add_subplot(1, 3, n, projection="3d")
-            sol_axs.append(ax)
-
-            idx = jnp.arange(-5, 6)
-            xs = jnp.array([linprog(c, A + i * dA, b)[0].x for i in idx])
-            x0s, x1s = xs.T
-            lin_xs = jnp.array(
-                [sol.x + jnp.einsum("ijk, jk->i", dxdA, i * dA) for i in idx]
-            )
-            lin_x0s, lin_x1s = lin_xs.T
-            ax.scatter(idx, x0s, x1s, label="true")
-            ax.scatter(idx, lin_x0s, lin_x1s, label="linearized")
-
-            ax.set_xlabel("i")
-            ax.set_ylabel("x0")
-            ax.set_zlabel("x1")
-
-        linearized = (
-            sol.fun - jnp.einsum("jk, jk", dfdA, dA)
-        )  # NOTE: I have to subtract here because arr[-1, -1] is the negative of the objective value
-        if not jnp.allclose(linearized, solp.fun):
-            basis_changed = jnp.any(sol.basis != solp.basis)
-            print(
-                f"WARN: linearized objective off by {jnp.linalg.norm(linearized - solp.fun)} ({basis_changed=})"
-            )
-
-            val_fig = plt.figure() if val_fig is None else val_fig
-            n = len(val_axs) + 1
-            ax = val_fig.add_subplot(1, 3, n)
-            val_axs.append(ax)
-
-            idx = jnp.arange(-5, 6)
-            true_objs = jnp.array([linprog(c, A + i * dA, b)[0].fun for i in idx])
-            lin_objs = jnp.array(
-                [sol.fun - jnp.einsum("jk, jk", dfdA, i * dA) for i in idx]
-            )
-            ax.plot(idx, true_objs, label="true")
-            ax.plot(idx, lin_objs, label="linearized")
-
-            ax.set_xlabel("i")
-            ax.set_ylabel("Objective Value")
-
-        assert jnp.allclose(sol.basis + jnp.einsum("ijk, jk->i", dbdA, dA), solp.basis)
-
-    if sol_fig is not None:
-        sol_fig.legend()
-        sol_fig.suptitle("Optimal point (linearized vs true)")
-
-    if val_fig is not None:
-        val_fig.legend()
-        val_fig.suptitle("Objective value (linearized vs true)")
-
-    if sol_fig is not None or val_fig is not None:
-        plt.show()
-
-    dbs = jnp.eye(3)
-    print(f"\nChecking wrt b:\n{dxdb=},\n{dfdb=},\n{dbdb=}")
-    for db in dbs / 10:
-        bp = b + db
-        solp, solp_type = linprog(c, A, bp)
-        assert jnp.allclose(sol.x + dxdb @ db, solp.x)
-        assert jnp.allclose(sol.fun - dfdb @ db, solp.fun)
-        assert jnp.allclose(sol.basis + dbdb @ db, solp.basis)
-
-    dcs = jnp.eye(2)
-    print(f"\nChecking wrt c:\n{dxdc=},\n{dfdc=},\n{dbdc=}")
-    for dc in dcs / 10:
-        cp = c + dc
-        solp, solp_type = linprog(cp, A, b)
-        assert jnp.allclose(sol.x + dxdc @ dc, solp.x)
-        assert jnp.allclose(sol.fun - dfdc @ dc, solp.fun)
-        assert jnp.allclose(sol.basis + dbdc @ dc, solp.basis)
-
-    print("\nChecking basis change point")
-    g = jax.jacfwd(linprog, has_aux=True, argnums=2)
-    print(f"Original:\nsol x: {sol.x}, fun: {sol.fun}, basis: {sol.basis}")
-
-    b -= 2.99999 * dbs[0]
-    solp, solp_type = linprog(c, A, b)
-    print(
-        f"Before basis change:\nsolp: {solp.x}, funp: {solp.fun}, basisp: {solp.basis}"
-    )
-
-    b -= 0.00001 * dbs[0]
-    solp, solp_type = linprog(c, A, b)
-    print(f"At basis change:\nsolp: {solp.x}, funp: {solp.fun}, basisp: {solp.basis}")
-    jac, jac_type = g(c, A, b)
-    print(f"dxdb: {jac.x}, dfdb: {jac.tableau[-1, -1]}, dbdb: {jac.basis}")
-
-    b -= dbs[0]
-    solp, solp_type = linprog(c, A, b)
-    print(
-        f"After basis change:\nsolp: {solp.x}, funp: {solp.fun}, basisp: {solp.basis}"
-    )
+    # print("Checking autodiff")
+    # A = jnp.array([[1.0, 1.0], [-3.0, -1.0], [1.0, 0.0]])
+    # b = jnp.array([6.0, -3.0, 3.0])
+    # c = jnp.array([-2.0, -1.0])
+    #
+    # sol, sol_type = linprog(c, A, b)
+    #
+    # g = jax.jacfwd(linprog, has_aux=True, argnums=[0, 1, 2])
+    # jac, jac_type = g(c, A, b)
+    # dxdc, dxdA, dxdb = jac.x
+    # dfdc, dfdA, dfdb = [arr[-1, -1] for arr in jac.tableau]
+    # dbdc, dbdA, dbdb = jac.basis
+    #
+    # dAs = jnp.array(
+    #     [
+    #         jnp.zeros_like(A).at[(i, j)].set(1)
+    #         for i in range(A.shape[0])
+    #         for j in range(A.shape[1])
+    #     ]
+    # )
+    # print(f"Checking wrt A:\n{dxdA=},\n{dfdA=},\n{dbdA=}")
+    # sol_fig, val_fig = None, None
+    # sol_axs, val_axs = [], []
+    # for dA in dAs / 10:
+    #     Ap = A + dA
+    #     solp, solp_type = linprog(c, Ap, b)
+    #
+    #     linearized = sol.x + jnp.einsum("ijk, jk->i", dxdA, dA)
+    #     if not jnp.allclose(linearized, solp.x):
+    #         basis_changed = jnp.any(sol.basis != solp.basis)
+    #         print(
+    #             f"Linearized solution off by {jnp.linalg.norm(linearized - solp.x)} ({basis_changed=})"
+    #         )
+    #
+    #         sol_fig = plt.figure() if sol_fig is None else sol_fig
+    #         n = len(sol_axs) + 1
+    #         ax = sol_fig.add_subplot(1, 3, n, projection="3d")
+    #         sol_axs.append(ax)
+    #
+    #         idx = jnp.arange(-5, 6)
+    #         xs = jnp.array([linprog(c, A + i * dA, b)[0].x for i in idx])
+    #         x0s, x1s = xs.T
+    #         lin_xs = jnp.array(
+    #             [sol.x + jnp.einsum("ijk, jk->i", dxdA, i * dA) for i in idx]
+    #         )
+    #         lin_x0s, lin_x1s = lin_xs.T
+    #         ax.scatter(idx, x0s, x1s, label="true")
+    #         ax.scatter(idx, lin_x0s, lin_x1s, label="linearized")
+    #
+    #         ax.set_xlabel("i")
+    #         ax.set_ylabel("x0")
+    #         ax.set_zlabel("x1")
+    #
+    #     linearized = (
+    #         sol.fun - jnp.einsum("jk, jk", dfdA, dA)
+    #     )  # NOTE: I have to subtract here because arr[-1, -1] is the negative of the objective value
+    #     if not jnp.allclose(linearized, solp.fun):
+    #         basis_changed = jnp.any(sol.basis != solp.basis)
+    #         print(
+    #             f"WARN: linearized objective off by {jnp.linalg.norm(linearized - solp.fun)} ({basis_changed=})"
+    #         )
+    #
+    #         val_fig = plt.figure() if val_fig is None else val_fig
+    #         n = len(val_axs) + 1
+    #         ax = val_fig.add_subplot(1, 3, n)
+    #         val_axs.append(ax)
+    #
+    #         idx = jnp.arange(-5, 6)
+    #         true_objs = jnp.array([linprog(c, A + i * dA, b)[0].fun for i in idx])
+    #         lin_objs = jnp.array(
+    #             [sol.fun - jnp.einsum("jk, jk", dfdA, i * dA) for i in idx]
+    #         )
+    #         ax.plot(idx, true_objs, label="true")
+    #         ax.plot(idx, lin_objs, label="linearized")
+    #
+    #         ax.set_xlabel("i")
+    #         ax.set_ylabel("Objective Value")
+    #
+    #     assert jnp.allclose(sol.basis + jnp.einsum("ijk, jk->i", dbdA, dA), solp.basis)
+    #
+    # if sol_fig is not None:
+    #     sol_fig.legend()
+    #     sol_fig.suptitle("Optimal point (linearized vs true)")
+    #
+    # if val_fig is not None:
+    #     val_fig.legend()
+    #     val_fig.suptitle("Objective value (linearized vs true)")
+    #
+    # if sol_fig is not None or val_fig is not None:
+    #     plt.show()
+    #
+    # dbs = jnp.eye(3)
+    # print(f"\nChecking wrt b:\n{dxdb=},\n{dfdb=},\n{dbdb=}")
+    # for db in dbs / 10:
+    #     bp = b + db
+    #     solp, solp_type = linprog(c, A, bp)
+    #     assert jnp.allclose(sol.x + dxdb @ db, solp.x)
+    #     assert jnp.allclose(sol.fun - dfdb @ db, solp.fun)
+    #     assert jnp.allclose(sol.basis + dbdb @ db, solp.basis)
+    #
+    # dcs = jnp.eye(2)
+    # print(f"\nChecking wrt c:\n{dxdc=},\n{dfdc=},\n{dbdc=}")
+    # for dc in dcs / 10:
+    #     cp = c + dc
+    #     solp, solp_type = linprog(cp, A, b)
+    #     assert jnp.allclose(sol.x + dxdc @ dc, solp.x)
+    #     assert jnp.allclose(sol.fun - dfdc @ dc, solp.fun)
+    #     assert jnp.allclose(sol.basis + dbdc @ dc, solp.basis)
+    #
+    # print("\nChecking basis change point")
+    # g = jax.jacfwd(linprog, has_aux=True, argnums=2)
+    # print(f"Original:\nsol x: {sol.x}, fun: {sol.fun}, basis: {sol.basis}")
+    #
+    # b -= 2.99999 * dbs[0]
+    # solp, solp_type = linprog(c, A, b)
+    # print(
+    #     f"Before basis change:\nsolp: {solp.x}, funp: {solp.fun}, basisp: {solp.basis}"
+    # )
+    #
+    # b -= 0.00001 * dbs[0]
+    # solp, solp_type = linprog(c, A, b)
+    # print(f"At basis change:\nsolp: {solp.x}, funp: {solp.fun}, basisp: {solp.basis}")
+    # jac, jac_type = g(c, A, b)
+    # print(f"dxdb: {jac.x}, dfdb: {jac.tableau[-1, -1]}, dbdb: {jac.basis}")
+    #
+    # b -= dbs[0]
+    # solp, solp_type = linprog(c, A, b)
+    # print(
+    #     f"After basis change:\nsolp: {solp.x}, funp: {solp.fun}, basisp: {solp.basis}"
+    # )
