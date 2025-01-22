@@ -66,18 +66,24 @@ def show_refinements(mode: Literal["sample", "linprog"]):
         # auxsys.compute_trajectory(0.0, sim_len, irx.i2ut(lifted_x0_int)) # can't use compute_trajectory because scipy LP is not traceable
 
         # Euler integrate instead
-        start = time.time()
-        dt = 0.01
-        ts = jnp.arange(0.0, sim_len, dt)
-        x = irx.i2ut(lifted_x0_int)
-        ys = jnp.empty((ts.size, x.size))
-        for i, t in enumerate(ts):
-            ys = ys.at[i].set(x)
-            x += dt * auxsys.E(t, x)
+        times = []
+        num_samples = 10
+        for j in range(num_samples):
+            start = time.time()
+            dt = 0.01
+            ts = jnp.arange(0.0, sim_len, dt)
+            x = irx.i2ut(lifted_x0_int)
+            ys = jnp.empty((ts.size, x.size))
+            for k, t in enumerate(ts):
+                ys = ys.at[k].set(x)
+                x += dt * auxsys.E(t, x)
 
-        traj = Trajectory(ts, ys, jnp.ones_like(ts, dtype=bool))
+            traj = Trajectory(ts, ys, jnp.ones_like(ts, dtype=bool))
+            times.append(time.time() - start)
+
+        times = jnp.array(times)
         print(
-            f"Computing trajectory with {mode} refinement for {i + 1} aux vars took {time.time() - start:.4g}s"
+            f"Computing trajectory with {mode} refinement for {i + 1} aux vars took {times.mean()} ± {times.std()}s"
         )
 
         ys_int = [irx.ut2i(y) for y in traj.ys]
