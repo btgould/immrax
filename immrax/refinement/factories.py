@@ -58,7 +58,7 @@ class LinProgRefinement(Refinement):
             retl = ret.lower.at[idx].set(new_lower_i)
             new_upper_i = jnp.where(
                 jnp.array([state_max.status == BoxOSQP.SOLVED]),
-                jnp.maximum(jnp.dot(obj_vec_i, sol_max.primal), ret.upper[idx]),
+                jnp.minimum(jnp.dot(obj_vec_i, sol_max.primal), ret.upper[idx]),
                 ret.upper[idx],
             )[0]
             retu = ret.upper.at[idx].set(new_upper_i)
