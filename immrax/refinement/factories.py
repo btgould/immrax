@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as onp
 
-import gurobipy as gp
+import cvxpy as cp
 
 from immrax.inclusion import Interval, icopy, interval
 from immrax.utils import angular_sweep, null_space
@@ -26,9 +26,7 @@ class LinProgRefinement(Refinement):
 
     def __init__(self, H: jnp.ndarray) -> None:
         self.H = H
-        self.model = gp.Model()
-        self.model.setParam("OutputFlag", 0)
-        self.x = self.model.addMVar(shape=H.shape[1], lb=-gp.GRB.INFINITY, name="x")
+        self.x = cp.Variable(H.shape[1])
         super().__init__()
 
     def get_refine_func(self) -> Callable[[Interval], Interval]:
@@ -41,19 +39,14 @@ class LinProgRefinement(Refinement):
             ))  # TODO: try adding buffer region *inside* the bounds to collapsed face
             obj_vec_i = onp.asarray(self.H[idx])
 
-            self.model.setObjective(obj_vec_i @ self.x, gp.GRB.MINIMIZE)
-            self.model.addConstr(A_ub @ self.x <= b_ub)
-            self.model.optimize()
-            min_success = self.model.status == gp.GRB.OPTIMAL
-            min_fun = self.model.objVal if min_success else jnp.inf
+            prob = cp.Problem(cp.Minimize(obj_vec_i @ self.x), [A_ub @ self.x <= b_ub])
+            prob.solve(verbose=True)
+            min_success = prob.status == "optimal"
+            min_fun = prob.value if min_success else jnp.inf
 
-            self.model.setObjective(obj_vec_i @ self.x, gp.GRB.MAXIMIZE)
-            self.model.optimize()
-            max_success = self.model.status == gp.GRB.OPTIMAL
-            max_fun = self.model.objVal if max_success else -jnp.inf
-
-
-            self.model.remove(self.model.getConstrs())
+            prob = cp.Problem(cp.Maximize(obj_vec_i @ self.x), [A_ub @ self.x <= b_ub])
+            max_success = prob.status == "optimal"
+            max_fun = prob.value if max_success else jnp.inf
 
             # If a vector that gives extra info on this var is found, refine bounds
             new_lower_i = min_fun if min_success else ret.lower[idx]
