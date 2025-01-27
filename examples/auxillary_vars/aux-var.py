@@ -69,8 +69,8 @@ def show_refinements(mode: Literal["sample", "linprog"]):
         print(f"Compilation took: {time.time() - start}s")
         print("Compiled.\nComputing trajectory...")
         traj, comp_time = run_times(
-            1,
-            get_traj,
+            10,
+            auxsys.compute_trajectory,
             0.0,
             sim_len,
             irx.i2ut(lifted_x0_int),
