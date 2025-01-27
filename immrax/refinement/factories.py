@@ -4,8 +4,9 @@ from typing import Callable
 
 import jax
 import jax.numpy as jnp
+import numpy as onp
 
-import scipy.optimize as opt
+import gurobipy as gp
 
 from immrax.inclusion import Interval, icopy, interval
 from immrax.utils import angular_sweep, null_space
@@ -25,30 +26,39 @@ class LinProgRefinement(Refinement):
 
     def __init__(self, H: jnp.ndarray) -> None:
         self.H = H
+        self.model = gp.Model()
+        self.model.setParam("OutputFlag", 0)
+        self.x = self.model.addMVar(shape=H.shape[1], lb=-gp.GRB.INFINITY, name="x")
         super().__init__()
 
     def get_refine_func(self) -> Callable[[Interval], Interval]:
-        A_ub = jnp.vstack((self.H, -self.H))
+        A_ub = onp.asarray(jnp.vstack((self.H, -self.H)))
 
         def var_refine(idx: int, ret: Interval) -> Interval:
             # I update b_eq and b_ub here because ret is shrinking
-            b_ub = jnp.concatenate(
+            b_ub = onp.asarray(jnp.concatenate(
                 (ret.upper, -ret.lower)
-            )  # TODO: try adding buffer region *inside* the bounds to collapsed face
-            obj_vec_i = self.H[idx]
+            ))  # TODO: try adding buffer region *inside* the bounds to collapsed face
+            obj_vec_i = onp.asarray(self.H[idx])
 
-            sol_min = opt.linprog(
-                c=obj_vec_i, A_ub=A_ub, b_ub=b_ub, bounds=(None, None)
-            )
+            self.model.setObjective(obj_vec_i @ self.x, gp.GRB.MINIMIZE)
+            self.model.addConstr(A_ub @ self.x <= b_ub)
+            self.model.optimize()
+            min_success = self.model.status == gp.GRB.OPTIMAL
+            min_fun = self.model.objVal if min_success else jnp.inf
 
-            sol_max = opt.linprog(
-                c=-obj_vec_i, A_ub=A_ub, b_ub=b_ub, bounds=(None, None)
-            )
+            self.model.setObjective(obj_vec_i @ self.x, gp.GRB.MAXIMIZE)
+            self.model.optimize()
+            max_success = self.model.status == gp.GRB.OPTIMAL
+            max_fun = self.model.objVal if max_success else -jnp.inf
+
+
+            self.model.remove(self.model.getConstrs())
 
             # If a vector that gives extra info on this var is found, refine bounds
-            new_lower_i = sol_min.fun if sol_min.success else ret.lower[idx]
+            new_lower_i = min_fun if min_success else ret.lower[idx]
             retl = ret.lower.at[idx].set(new_lower_i)
-            new_upper_i = -sol_max.fun if sol_max.success else ret.upper[idx]
+            new_upper_i = max_fun if max_success else ret.upper[idx]
             retu = ret.upper.at[idx].set(new_upper_i)
 
             return interval(retl, retu)
