@@ -80,6 +80,7 @@ def show_refinements(mode: Literal["sample", "linprog"]):
 
             traj = Trajectory(ts, ys, jnp.ones_like(ts, dtype=bool))
             times.append(time.time() - start)
+            print(f"sample {j} finished")
 
         times = jnp.array(times)
         print(
