@@ -70,7 +70,7 @@ def show_refinements(mode: Literal["sample", "linprog"]):
         print("Compiled.\nComputing trajectory...")
         traj, comp_time = run_times(
             10,
-            auxsys.compute_trajectory,
+            get_traj,
             0.0,
             sim_len,
             irx.i2ut(lifted_x0_int),

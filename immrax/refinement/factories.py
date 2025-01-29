@@ -27,7 +27,7 @@ class LinProgRefinement(Refinement):
     def __init__(self, H: jnp.ndarray) -> None:
         self.H = H
         self.Q = jnp.zeros((H.shape[1], H.shape[1]))
-        self.solver = OSQP(maxiter=200)
+        self.solver = OSQP()
         super().__init__()
 
     def get_refine_func(self) -> Callable[[Interval], Interval]:
