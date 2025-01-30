@@ -5,7 +5,8 @@ from typing import Callable
 import jax
 import jax.numpy as jnp
 
-from jaxopt import OSQP, BoxOSQP
+from mpax import r2HPDHG, create_lp
+from mpax.utils import TerminationStatus
 
 from immrax.optim import linprog
 from immrax.inclusion import Interval, icopy, interval
@@ -26,8 +27,9 @@ class LinProgRefinement(Refinement):
 
     def __init__(self, H: jnp.ndarray) -> None:
         self.H = H
-        self.Q = jnp.zeros((H.shape[1], H.shape[1]))
-        self.solver = OSQP()
+        self.solver = r2HPDHG(iteration_limit=1000)
+        self.A_eq = jnp.zeros_like(self.H)
+        self.b_eq = jnp.zeros(H.shape[0])
         super().__init__()
 
     def get_refine_func(self) -> Callable[[Interval], Interval]:
@@ -40,25 +42,38 @@ class LinProgRefinement(Refinement):
             )  # TODO: try adding buffer region *inside* the bounds to collapsed face
             obj_vec_i = self.H[idx]
 
-            sol_min, state_min = self.solver.run(
-                params_obj=(self.Q, obj_vec_i),
-                params_ineq=(A_ub, b_ub),
+            min_lp = create_lp(
+                obj_vec_i,
+                self.A_eq,
+                self.b_eq,
+                A_ub,
+                b_ub,
+                -1e5 * jnp.ones_like(obj_vec_i),
+                1e5 * jnp.ones_like(obj_vec_i),
             )
-            sol_max, state_max = self.solver.run(
-                params_obj=(self.Q, -obj_vec_i),
-                params_ineq=(A_ub, b_ub),
+            min_result = self.solver.optimize(min_lp)
+
+            max_lp = create_lp(
+                -obj_vec_i,
+                self.A_eq,
+                self.b_eq,
+                A_ub,
+                b_ub,
+                -1e5 * jnp.ones_like(obj_vec_i),
+                1e5 * jnp.ones_like(obj_vec_i),
             )
+            max_result = self.solver.optimize(max_lp)
 
             # If a vector that gives extra info on this var is found, refine bounds
             new_lower_i = jnp.where(
-                jnp.array([state_min.status == BoxOSQP.SOLVED]),
-                jnp.maximum(jnp.dot(obj_vec_i, sol_min.primal), ret.lower[idx]),
+                jnp.array([min_result.termination_status == TerminationStatus.OPTIMAL]),
+                jnp.maximum(jnp.dot(obj_vec_i, max_result.primal_solution), ret.lower[idx]),
                 ret.lower[idx],
             )[0]
             retl = ret.lower.at[idx].set(new_lower_i)
             new_upper_i = jnp.where(
-                jnp.array([state_max.status == BoxOSQP.SOLVED]),
-                jnp.minimum(jnp.dot(obj_vec_i, sol_max.primal), ret.upper[idx]),
+                jnp.array([max_result.termination_status == TerminationStatus.OPTIMAL]),
+                jnp.minimum(jnp.dot(obj_vec_i, max_result.primal_solution), ret.upper[idx]),
                 ret.upper[idx],
             )[0]
             retu = ret.upper.at[idx].set(new_upper_i)
