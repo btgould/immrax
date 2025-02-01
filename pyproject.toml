@@ -24,6 +24,7 @@ dependencies = [
     "equinox ~= 0.11.5",
     "immutabledict ~= 4.2.0",
     "jax_verify@git+https://github.com/Akash-Harapanahalli/jax_verify.git",
+	"linrax"
 ]
 
 [project.optional-dependencies]
