@@ -58,7 +58,7 @@ def angular_refined_trajectory(
     lifted_x0_int = irx.interval(H) @ x0_int
 
     # Compute refined trajectory
-    auxsys = AuxVarEmbedding(sys, H, mode=mode, if_transform=mjacif)
+    auxsys = AuxVarEmbedding(sys, H, mode=mode)
     print("Compiling...")
     start = time.time()
     get_traj = jax.jit(
@@ -69,7 +69,7 @@ def angular_refined_trajectory(
     print(f"Compilation took: {time.time() - start:.4g}s")
     print("Compiled.\nComputing trajectory...")
     traj, comp_time = run_times(
-        1,
+        10,
         get_traj,
         0.0,
         sim_len,
@@ -112,7 +112,7 @@ x0_int = irx.icentpert(jnp.array([1.0, 0.0]), jnp.array([0.1, 0.1]))
 sim_len = 2 * jnp.pi
 
 plt.rcParams.update({"text.usetex": True, "font.family": "CMU Serif", "font.size": 14})
-plt.figure()
+# plt.figure()
 
 
 # Trajectory of unrefined system
@@ -123,25 +123,25 @@ traj = embsys.compute_trajectory(
     sim_len,
     irx.i2ut(x0_int),
 )
-plt.gcf().suptitle(f"{sys.name} with Uncertainty (No Refinement)")
-draw_trajectory_2d(traj)
+# plt.gcf().suptitle(f"{sys.name} with Uncertainty (No Refinement)")
+# draw_trajectory_2d(traj)
 
 
-for i in range(6, 7, 2):
-    # traj_s = angular_refined_trajectory(i, "sample")
+for i in range(2, 7, 2):
+    traj_s, H, mc_traj = angular_refined_trajectory(i, "sample")
     traj_lp, H, mc_traj = angular_refined_trajectory(i, "linprog")
-    plot_angular_refined_trajectory(traj_lp, H)
+    # plot_angular_refined_trajectory(traj_lp, H)
     # fig = plt.gcf()
-    x = mc_traj.ys[:, :, 0].T
-    y = mc_traj.ys[:, :, 1].T
-    plt.plot(x, y, alpha=0.5, color="gray", linewidth=0.5)
+    # x = mc_traj.ys[:, :, 0].T
+    # y = mc_traj.ys[:, :, 1].T
+    # plt.plot(x, y, alpha=0.5, color="gray", linewidth=0.5)
 
-blue_rectangle = mpatches.Patch(
-    edgecolor="tab:blue", facecolor="none", alpha=0.4, label="Reachable Set Bounds"
-)
-gray_line = mlines.Line2D(
-    [], [], color="gray", alpha=0.5, label="Monte Carlo Trajectories"
-)
-plt.legend(handles=[blue_rectangle, gray_line], loc="lower left")
+# blue_rectangle = mpatches.Patch(
+#     edgecolor="tab:blue", facecolor="none", alpha=0.4, label="Reachable Set Bounds"
+# )
+# gray_line = mlines.Line2D(
+#     [], [], color="gray", alpha=0.5, label="Monte Carlo Trajectories"
+# )
+# plt.legend(handles=[blue_rectangle, gray_line], loc="lower left")
 
-plt.show()
+# plt.show()
