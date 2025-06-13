@@ -16,7 +16,7 @@ from jax._src.core import (
     typecheck,
 )
 from jax._src.util import safe_map
-from jax.core import Primitive
+from jax.extend.core import Primitive
 
 from immrax.inclusion.interval import *
 
