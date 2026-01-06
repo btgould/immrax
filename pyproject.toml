@@ -24,7 +24,8 @@ version = "0.3.6"
 readme = {file = "README.md", content-type = "text/markdown"}
 
 dependencies = [
-	"numpy ~= 2.3.2",
+<<<<<<< HEAD
+	"numpy",
 	"scipy ~= 1.16.1",
 	"shapely ~= 2.0.6",
 	"matplotlib ~= 3.9.2",
