@@ -1,13 +1,15 @@
-import jax
-from jaxtyping import Integer, Float, ArrayLike
-from typing import Union, List, Callable, Literal
+import warnings
 from abc import ABC, abstractmethod
+from functools import partial
+from typing import Callable, List, Literal, Union
+
+import jax
+from diffrax import AbstractSolver, Dopri5, Euler, ODETerm, SaveAt, Tsit5, diffeqsolve
+from immutabledict import immutabledict
+from jaxtyping import ArrayLike, Float, Integer
+
 from ..system import System
 from .parametope import Parametope
-from immutabledict import immutabledict
-from diffrax import AbstractSolver, ODETerm, Euler, Dopri5, Tsit5, SaveAt, diffeqsolve
-import warnings
-from functools import partial
 
 
 class ParametricEmbedding(ABC):
@@ -43,7 +45,9 @@ class ParametricEmbedding(ABC):
             _description_
         """
 
-    @partial(jax.jit, static_argnums=(0, 4), static_argnames=("solver", "f_kwargs", "inputs"))
+    @partial(
+        jax.jit, static_argnums=(0, 4), static_argnames=("solver", "f_kwargs", "inputs")
+    )
     def compute_reachset(
         self,
         t0: Union[Integer, Float],
@@ -56,6 +60,7 @@ class ParametricEmbedding(ABC):
         f_kwargs: immutabledict = immutabledict({}),
         **kwargs,
     ):
+        print("Recompiling reachset computation")
         def func(t, x, args):
             # Unpack the inputs
             return self._dynamics(t, x, *[u(t, x) for u in inputs], **f_kwargs)
@@ -75,9 +80,13 @@ class ParametricEmbedding(ABC):
         aux0 = self._initialize(pt0)
 
         saveat = SaveAt(t0=True, t1=True, steps=True)
-        return diffeqsolve(
+        # Save current guard state and temporarily allow transfers for diffrax
+        _prev_guard = jax.config.jax_transfer_guard
+        jax.config.update("jax_transfer_guard", "allow")
+        sol = diffeqsolve(
             term, solver, t0, tf, dt, (pt0, aux0), saveat=saveat, **kwargs
         )
+        jax.config.update("jax_transfer_guard", _prev_guard)
         # return func(t0, (pt0, aux0), None)
 
 
