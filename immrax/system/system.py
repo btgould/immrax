@@ -2,6 +2,8 @@ import abc
 from functools import partial
 from typing import Any, Callable, List, Literal, Union
 
+import jax
+import jax.numpy as jnp
 from diffrax import (
     AbstractSolver,
     Dopri5,
@@ -12,14 +14,12 @@ from diffrax import (
     diffeqsolve,
 )
 from immutabledict import immutabledict
-import jax
-import jax.numpy as jnp
 from jaxtyping import Float, Integer
 
 from .trajectory import (
-    RawTrajectory,
     RawContinuousTrajectory,
     RawDiscreteTrajectory,
+    RawTrajectory,
 )
 
 
@@ -140,7 +140,11 @@ class System(abc.ABC):
                 raise Exception(f"{solver=} is not a valid solver")
 
             saveat = SaveAt(t0=True, t1=True, steps=True)
+            # Save current guard state and temporarily allow transfers for diffrax
+            _prev_guard = jax.config.jax_transfer_guard
+            jax.config.update("jax_transfer_guard", "allow")
             sol = diffeqsolve(term, solver, t0, tf, dt, x0, saveat=saveat, **kwargs)
+            jax.config.update("jax_transfer_guard", _prev_guard)
             return RawContinuousTrajectory(sol)
 
         elif self.evolution == "discrete":
