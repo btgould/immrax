@@ -87,7 +87,7 @@ class ParametricEmbedding(ABC):
             term, solver, t0, tf, dt, (pt0, aux0), saveat=saveat, **kwargs
         )
         jax.config.update("jax_transfer_guard", _prev_guard)
-        # return func(t0, (pt0, aux0), None)
+        return sol
 
 
 class ParametopeEmbedding(ParametricEmbedding):
