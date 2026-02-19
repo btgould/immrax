@@ -46,6 +46,15 @@ class Polytope(hParametope):
         bi = jnp.hstack((-self.ly, self.uy))
         return jnp.asarray(compute_polytope_vertices(Hi, bi)) + self.ox
 
+    def area(self):
+        """Compute the area of a 2D polytope using the shoelace formula."""
+        verts = jnp.asarray(self.get_vertices())
+        centroid = verts.mean(axis=0)
+        angles = jnp.arctan2(verts[:, 1] - centroid[1], verts[:, 0] - centroid[0])
+        verts = verts[jnp.argsort(angles)]
+        x, y = verts[:, 0], verts[:, 1]
+        return 0.5 * jnp.abs(jnp.dot(x, jnp.roll(y, -1)) - jnp.dot(y, jnp.roll(x, -1)))
+
     def plot_projection(self, ax, xi=0, yi=1, rescale=False, **kwargs):
         Hi = onp.vstack((-self.H, self.H))
         bi = onp.hstack((-self.ly, self.uy))

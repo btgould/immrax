@@ -60,7 +60,7 @@ class ParametricEmbedding(ABC):
         f_kwargs: immutabledict = immutabledict({}),
         **kwargs,
     ):
-        print("Recompiling reachset computation")
+        # print("Recompiling reachset computation")
         def func(t, x, args):
             # Unpack the inputs
             return self._dynamics(t, x, *[u(t, x) for u in inputs], **f_kwargs)
