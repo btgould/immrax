@@ -15,7 +15,7 @@ from .interval import (
 )
 
 from . import nif as nif
-from .nif import natif
+from .nif import natif, comparison_override
 from .custom_if import custom_if
 
 from .jacobian import (
@@ -69,4 +69,5 @@ __all__ = [
     "get_corners",
     "mjacif",
     "mjacM",
+    "comparison_override",
 ]

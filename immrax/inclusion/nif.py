@@ -800,3 +800,43 @@ inclusion_registry[lax.eq_p] = _make_comparison_guard("eq")
 inclusion_registry[lax.ne_p] = _make_comparison_guard("ne")
 inclusion_registry[lax.gt_p] = _make_comparison_guard("gt")
 inclusion_registry[lax.ge_p] = _make_comparison_guard("ge")
+
+
+def _make_comparison_inclusion(relation_mask) -> Callable:
+    """Creates an inclusion function for a comparison primitive using the given Allen relation mask."""
+    def _inclusion(x, y, **kwargs):
+        from immrax.comparison import interval_compare
+        from immrax.inclusion.interval import interval
+        x = interval(x)
+        y = interval(y)
+        relation = interval_compare(x, y)
+        return relation.matches(relation_mask)
+    return _inclusion
+
+
+from contextlib import contextmanager
+
+@contextmanager
+def comparison_override(overrides):
+    """Context manager to temporarily override comparison guards in inclusion_registry.
+
+    Args:
+        overrides: Dict mapping JAX comparison primitives to IntervalRelation masks.
+                   Each primitive's guard is replaced with an inclusion function that
+                   uses interval_compare and checks against the given mask.
+                   Example: {lax.eq_p: IntervalRelation.EQUAL}
+                   If empty or None, this is a no-op.
+    """
+    if not overrides:
+        yield
+        return
+
+    saved = {p: inclusion_registry[p] for p in overrides}
+    for p, mask in overrides.items():
+        inclusion_registry[p] = _make_comparison_inclusion(mask)
+
+    try:
+        yield
+    finally:
+        for p, orig in saved.items():
+            inclusion_registry[p] = orig
