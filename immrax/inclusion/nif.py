@@ -151,43 +151,33 @@ _add_passthrough_to_registry(lax.scatter_add_p)
 _add_passthrough_to_registry(lax.scatter_max_p)
 _add_passthrough_to_registry(lax.scatter_min_p)
 def _inclusion_cond_p(*args, branches, **kwargs):
-    """Inclusion function for cond that evaluates branches with interval arithmetic.
+    """Inclusion function for cond that lazily evaluates only the selected branch.
 
-    Instead of applying cond independently to lower/upper bounds (which can
-    select different branches for each), this evaluates every branch through
-    natif_jaxpr and then selects the correct result based on the predicate.
+    Wraps each branch's natif_jaxpr evaluation in a lambda so that
+    lax.switch only executes the branch chosen by the predicate,
+    avoiding unnecessary compute on unselected branches.
     """
     index = args[0]  # int32 scalar selecting the branch
     operands = args[1:]  # may contain Intervals
 
-    # Evaluate ALL branches using natif_jaxpr (interval arithmetic)
-    branch_results = []
-    for branch in branches:
-        if isinstance(branch, jax.extend.core.ClosedJaxpr):
-            res = natif_jaxpr(branch.jaxpr, branch.consts, *operands)
-        else:
-            res = natif_jaxpr(branch, [], *operands)
-        branch_results.append(res)
+    def make_branch_fn(branch):
+        def branch_fn(*ops):
+            if isinstance(branch, jax.extend.core.ClosedJaxpr):
+                res = natif_jaxpr(branch.jaxpr, branch.consts, *ops)
+            else:
+                res = natif_jaxpr(branch, [], *ops)
+            # Ensure all outputs are Intervals for consistent pytree structure
+            return tuple(interval(r) for r in res)
 
-    # Select the correct branch result based on index using lax.switch
-    n_outputs = len(branch_results[0])
-    results = []
-    for i in range(n_outputs):
-        outputs = [br[i] for br in branch_results]
-        has_intervals = any(isinstance(o, Interval) for o in outputs)
+        return branch_fn
 
-        if has_intervals:
-            outputs = [interval(o) for o in outputs]
-            lowers = [o.lower for o in outputs]
-            uppers = [o.upper for o in outputs]
-            selected_lower = lax.switch(index, [lambda l=l: l for l in lowers])
-            selected_upper = lax.switch(index, [lambda u=u: u for u in uppers])
-            results.append(Interval(selected_lower, selected_upper))
-        else:
-            selected = lax.switch(index, [lambda o=o: o for o in outputs])
-            results.append(selected)
+    branch_fns = [make_branch_fn(b) for b in branches]
 
-    return results
+    # Only the selected branch is evaluated; Interval is a pytree so
+    # lax.switch handles flattening/unflattening automatically.
+    results = lax.switch(index, branch_fns, *operands)
+
+    return list(results)
 
 
 inclusion_registry[lax.cond_p] = _inclusion_cond_p
