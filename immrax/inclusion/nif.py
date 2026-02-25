@@ -150,7 +150,47 @@ _add_passthrough_to_registry(lax.scatter_p)
 _add_passthrough_to_registry(lax.scatter_add_p)
 _add_passthrough_to_registry(lax.scatter_max_p)
 _add_passthrough_to_registry(lax.scatter_min_p)
-_add_passthrough_to_registry(lax.cond_p)
+def _inclusion_cond_p(*args, branches, **kwargs):
+    """Inclusion function for cond that evaluates branches with interval arithmetic.
+
+    Instead of applying cond independently to lower/upper bounds (which can
+    select different branches for each), this evaluates every branch through
+    natif_jaxpr and then selects the correct result based on the predicate.
+    """
+    index = args[0]  # int32 scalar selecting the branch
+    operands = args[1:]  # may contain Intervals
+
+    # Evaluate ALL branches using natif_jaxpr (interval arithmetic)
+    branch_results = []
+    for branch in branches:
+        if isinstance(branch, jax.extend.core.ClosedJaxpr):
+            res = natif_jaxpr(branch.jaxpr, branch.consts, *operands)
+        else:
+            res = natif_jaxpr(branch, [], *operands)
+        branch_results.append(res)
+
+    # Select the correct branch result based on index using lax.switch
+    n_outputs = len(branch_results[0])
+    results = []
+    for i in range(n_outputs):
+        outputs = [br[i] for br in branch_results]
+        has_intervals = any(isinstance(o, Interval) for o in outputs)
+
+        if has_intervals:
+            outputs = [interval(o) for o in outputs]
+            lowers = [o.lower for o in outputs]
+            uppers = [o.upper for o in outputs]
+            selected_lower = lax.switch(index, [lambda l=l: l for l in lowers])
+            selected_upper = lax.switch(index, [lambda u=u: u for u in uppers])
+            results.append(Interval(selected_lower, selected_upper))
+        else:
+            selected = lax.switch(index, [lambda o=o: o for o in outputs])
+            results.append(selected)
+
+    return results
+
+
+inclusion_registry[lax.cond_p] = _inclusion_cond_p
 if hasattr(lax, "select_p"):
     _add_passthrough_to_registry(lax.select_p)
 if hasattr(lax, "select_n_p"):
