@@ -305,6 +305,18 @@ inclusion_registry[lax.neg_p] = _inclusion_neg_p
 Interval.__neg__ = _inclusion_neg_p
 
 
+def _inclusion_abs_p(x: Interval) -> Interval:
+    abs_lo = jnp.abs(x.lower)
+    abs_hi = jnp.abs(x.upper)
+    # Tight lower bound: 0 when interval spans zero
+    lower = jnp.where(x.lower * x.upper <= 0, 0.0, jnp.minimum(abs_lo, abs_hi))
+    upper = jnp.maximum(abs_lo, abs_hi)
+    return Interval(lower, upper)
+
+
+inclusion_registry[lax.abs_p] = _inclusion_abs_p
+
+
 def _inclusion_mul_p(x: Interval, y: Interval) -> Interval:
     if isinstance(x, Interval) and isinstance(y, Interval):
         _1 = x.lower * y.lower
